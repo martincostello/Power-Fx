@@ -43,6 +43,8 @@ namespace Microsoft.PowerFx
 
         private static StandardFormatter _standardFormatter;
 
+        private static readonly int _maxTableRows = 15;
+
         private static bool _reset;
 
         private static RecalcEngine ReplRecalcEngine()
@@ -173,6 +175,8 @@ namespace Microsoft.PowerFx
                         return;
                     }
 
+                    _standardFormatter.MaxTableRows = _maxTableRows;
+
                     repl.HandleLineAsync(line, lineNumber: lineNumber++).Wait();
 
                     // Exit() function called
@@ -236,6 +240,45 @@ namespace Microsoft.PowerFx
 
         private class Option0Function : ReflectionFunction
         {
+            private static readonly RecordType OptionRecordType = RecordType.Empty()
+                .Add(new NamedFormulaType("Option", FormulaType.String))
+                .Add(new NamedFormulaType("Value", FormulaType.Boolean));
+
+            public class OptionRecordValue : RecordValue
+            {
+                private readonly Dictionary<string, FormulaValue> _fields = new Dictionary<string, FormulaValue>();
+
+                public OptionRecordValue(string name, bool value)
+                    : base(OptionRecordType)
+                {
+                    _fields.Add("Option", FormulaValue.New(name));
+                    _fields.Add("Value", FormulaValue.New(value));
+                }
+
+                protected override bool TryGetField(FormulaType fieldType, string fieldName, out FormulaValue result)
+                {
+                    return _fields.TryGetValue(fieldName, out result);
+                }
+            }
+
+            public class OptionTableValue : CollectionTableValue<RecordValue>
+            {
+                public OptionTableValue(IEnumerable<RecordValue> list)
+                   : base(OptionRecordType, list)
+                {
+                }
+
+                protected override DValue<RecordValue> Marshal(RecordValue record)
+                {
+                    return DValue<RecordValue>.Of(record);
+                }
+
+                protected override RecordValue MarshalInverse(RecordValue record)
+                {
+                    return record;
+                }
+            }
+
             public Option0Function()
                 : base("Option", FormulaType.String)
             {
@@ -243,26 +286,27 @@ namespace Microsoft.PowerFx
 
             public FormulaValue Execute()
             {
-                StringBuilder sb = new StringBuilder();
+                List<OptionRecordValue> optionList = new List<OptionRecordValue>()
+                {
+                    new OptionRecordValue("FormatTable", _standardFormatter.FormatTable),
+                    new OptionRecordValue("HashCodes", _standardFormatter.HashCodes),
+                    new OptionRecordValue("NumberIsFloat", _numberIsFloat),
+                    new OptionRecordValue("LargeCallDepth", _largeCallDepth),
+                    new OptionRecordValue("StackTrace", _stackTrace),
+                    new OptionRecordValue("TextFirst", _textFirst),
+                };
 
-                sb.Append("\n");
-
-                sb.Append($"{"FormatTable:",-42}{_standardFormatter.FormatTable}\n");
-                sb.Append($"{"HashCodes:",-42}{_standardFormatter.HashCodes}\n");
-                sb.Append($"{"NumberIsFloat:",-42}{_numberIsFloat}\n");
-                sb.Append($"{"LargeCallDepth:",-42}{_largeCallDepth}\n");
-                sb.Append($"{"StackTrace:",-42}{_stackTrace}\n");
-                sb.Append($"{"TextFirst:",-42}{_textFirst}\n");
+                _standardFormatter.MaxTableRows = int.MaxValue;
 
                 foreach (var prop in typeof(Features).GetProperties(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic))
                 {
                     if (prop.PropertyType == typeof(bool) && prop.CanWrite)
                     {
-                        sb.Append($"{prop.Name + ((bool)prop.GetValue(Features.PowerFxV1) ? " (V1)" : string.Empty) + ":",-42}{prop.GetValue(_features)}\n");
+                        optionList.Add(new OptionRecordValue($"{prop.Name}{((bool)prop.GetValue(Features.PowerFxV1) ? " (v1)" : string.Empty)}", (bool)prop.GetValue(_features)));
                     }
                 }
 
-                return FormulaValue.New(sb.ToString());
+                return new OptionTableValue(optionList);
             }
         }
 
